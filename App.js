@@ -1,7 +1,9 @@
+import { useEffect, useState } from 'react';
 import { StatusBar } from 'expo-status-bar';
-import { Button, StyleSheet, Text, View } from 'react-native';
+import { Alert, Button, StyleSheet, View, Platform } from 'react-native';
 import * as Notifications from 'expo-notifications';
-import { useEffect } from 'react';
+
+import appJson from './app.json'
 
 Notifications.setNotificationHandler({
   handleNotification: async () => {
@@ -14,28 +16,56 @@ Notifications.setNotificationHandler({
 });
 
 export default function App() {
+  const [pushToken, setPushToken] = useState();
 
   useEffect(() => {
-    const subs = Notifications.addNotificationReceivedListener(notification => {
-      console.log(notification, 'received');
+    async function configurePushNotifications() {
+      const { status } = await Notifications.getPermissionsAsync()
+      let finalStatus = status;
+      if (finalStatus !== 'granted') {
+        const { status } = await Notifications.requestPermissionsAsync();
+        finalStatus = status;
+      }
+      if (status !== 'granted') {
+        Alert.alert(
+          'Insufficient permissions!',
+          'You need to grant notification permissions to use this app.',
+          [{ text: 'Okay' }]
+        );
+        return;
+      }
+
+      const pushTokenData = await Notifications.getExpoPushTokenAsync({ projectId: appJson.expo?.extra?.eas?.projectId })
+      setPushToken(pushTokenData.data);
+    }
+
+    configurePushNotifications();
+    if (Platform.OS === 'android') {
+      Notifications.setNotificationChannelAsync('default', {
+        name: 'Default',
+        importance: Notifications.AndroidImportance.DEFAULT,
+        description: 'Default channel for notifications',
+      });
+    }
+
+  }, []);
+
+  useEffect(() => {
+    const subs1 = Notifications.addNotificationReceivedListener(notification => {
+      console.log(JSON.stringify(notification, null, 2), 'received');
     })
+
+    const subs2 = Notifications.addNotificationResponseReceivedListener(response => {
+      console.log(JSON.stringify(response, null, 2), 'response');
+    })
+
     return () => {
-      subs.remove();
+      subs1.remove();
+      subs2.remove();
     }
   }, []);
 
   async function scheduleNotificationHandler() {
-    const { status: existingStatus } = await Notifications.getPermissionsAsync();
-    let finalStatus = existingStatus;
-    if (existingStatus !== 'granted') {
-      const { status } = await Notifications.requestPermissionsAsync();
-      finalStatus = status;
-    }
-    if (finalStatus !== 'granted') {
-      console.log('Failed to get permission for notifications')
-      return;
-    }
-
     try {
       Notifications.scheduleNotificationAsync({
         content: {
@@ -52,9 +82,31 @@ export default function App() {
     }
   }
 
+  function sendPushNotificationHandler() {
+    try {
+      fetch('https://exp.host/--/api/v2/push/send', {
+        method: 'POST',
+        headers: {
+          'Accept': 'application/json',
+          'Accept-Encoding': 'gzip, deflate',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          to: pushToken,
+          data: { extraData: 'Some data' },
+          title: 'Sent via the app',
+          body: 'This push notification was sent via the app!',
+        }),
+      });
+    } catch (err) {
+      console.log(err);
+    }
+  }
+
   return (
     <View style={styles.container}>
       <Button title="Schedule notification" onPress={scheduleNotificationHandler}/>
+      <Button title="Send push notification" onPress={sendPushNotificationHandler}/>
       <StatusBar style="auto" />
     </View>
   );
